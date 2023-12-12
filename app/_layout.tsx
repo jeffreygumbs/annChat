@@ -1,56 +1,80 @@
-import FontAwesome from '@expo/vector-icons/FontAwesome';
-import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
-import { useFonts } from 'expo-font';
-import { SplashScreen, Stack } from 'expo-router';
-import { useEffect } from 'react';
-import { useColorScheme } from 'react-native';
+import 'react-native-gesture-handler';
+import React, { useEffect, useState } from 'react';
+import { Slot, Stack, useRouter, useSegments } from 'expo-router';
+import { StreamVideo, StreamVideoClient, User } from '@stream-io/video-react-native-sdk';
+import { AuthProvider, useAuth } from '../context/AuthContext';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { OverlayProvider } from 'stream-chat-expo';
+import Toast from 'react-native-toast-message';
 
-export {
-  // Catch any errors thrown by the Layout component.
-  ErrorBoundary,
-} from 'expo-router';
+const STREAM_KEY = process.env.EXPO_PUBLIC_STREAM_ACCESS_KEY;
 
-export const unstable_settings = {
-  // Ensure that reloading on `/modal` keeps a back button present.
-  initialRouteName: '(tabs)',
+const InitialLayout = () => {
+  const { authState, initialized } = useAuth();
+  const [client, setClient] = useState<StreamVideoClient | null>(null);
+  const segments = useSegments();
+  const router = useRouter();
+
+  // Navigate the user to the correct page based on their authentication state
+  useEffect(() => {
+    if (!initialized) return;
+
+    // Check if the path/url is in the (inside) group
+    const inAuthGroup = segments[0] === '(inside)';
+
+    if (authState?.authenticated && !inAuthGroup) {
+      // Redirect authenticated users to the list page
+      router.replace('/(inside)');
+    } else if (!authState?.authenticated) {
+      // Redirect unauthenticated users to the login page
+      client?.disconnectUser();
+      router.replace('/');
+    }
+  }, [initialized, authState]);
+
+  // Initialize the StreamVideoClient when the user is authenticated
+  useEffect(() => {
+    if (authState?.authenticated && authState.token) {
+      const user: User = { id: authState.user_id! };
+
+      try {
+        const client = new StreamVideoClient({ apiKey: STREAM_KEY!, user, token: authState.token });
+        setClient(client);
+      } catch (e) {
+        console.log('Error creating client: ', e);
+      }
+    }
+  }, [authState]);
+
+  // Conditionally render the correct layout
+  return (
+    <>
+      {!client && (
+        <Stack>
+          <Stack.Screen name="index" options={{ headerShown: false }} />
+        </Stack>
+      )}
+      {client && (
+        <StreamVideo client={client}>
+          <OverlayProvider>
+            <Slot />
+            <Toast />
+          </OverlayProvider>
+        </StreamVideo>
+      )}
+    </>
+  );
 };
 
-// Prevent the splash screen from auto-hiding before asset loading is complete.
-SplashScreen.preventAutoHideAsync();
-
-export default function RootLayout() {
-  const [loaded, error] = useFonts({
-    SpaceMono: require('../assets/fonts/SpaceMono-Regular.ttf'),
-    ...FontAwesome.font,
-  });
-
-  // Expo Router uses Error Boundaries to catch errors in the navigation tree.
-  useEffect(() => {
-    if (error) throw error;
-  }, [error]);
-
-  useEffect(() => {
-    if (loaded) {
-      SplashScreen.hideAsync();
-    }
-  }, [loaded]);
-
-  if (!loaded) {
-    return null;
-  }
-
-  return <RootLayoutNav />;
-}
-
-function RootLayoutNav() {
-  const colorScheme = useColorScheme();
-
+// Wrap the app with the AuthProvider
+const RootLayout = () => {
   return (
-    <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <Stack>
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="modal" options={{ presentation: 'modal' }} />
-      </Stack>
-    </ThemeProvider>
+    <AuthProvider>
+      <GestureHandlerRootView style={{ flex: 1 }}>
+        <InitialLayout />
+      </GestureHandlerRootView>
+    </AuthProvider>
   );
-}
+};
+
+export default RootLayout;
